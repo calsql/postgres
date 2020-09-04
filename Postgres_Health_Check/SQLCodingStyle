@@ -1,0 +1,16 @@
+The following illustrates the agreed upon coding style for any and all SQL
+committed to the ACH tool:
+1) Have your editor convert tabs to spaces
+2) Set a modeline as the last line of your file (example below)
+3) use the <> operator instead of the != operator
+4) spaces around your operators, pls
+    e.g. foo * bar, not foo*bar
+5) spaces after commas
+    e.g. (a, b), not (a,b)
+6) always include the closing ;
+7) run tools/pg_format against your code!
+
+*) more to come, I'm sure
+
+
+# vim: set expandtab:ts=4:sw=4
