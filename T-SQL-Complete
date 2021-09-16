@@ -1,0 +1,473 @@
+ 
+-- Basic Cursor
+-- *************
+
+						DECLARE @TBL_NAME VARCHAR(256)
+							DECLARE CUR CURSOR FOR  SELECT NAME  FROM SYSOBJECTS WHERE XTYPE = 'U' AND NAME IN ('TABLE1','TABLE2','TABLE3','TABLE4')
+
+								OPEN CUR 
+									FETCH NEXT FROM CUR INTO @TBL_NAME 
+									WHILE @@FETCH_STATUS = 0
+									
+										BEGIN
+										PRINT @TBL_NAME 
+											FETCH NEXT FROM CUR INTO @TBL_NAME 
+											
+										CONTINUE
+										END 
+									
+									
+								CLOSE CUR 
+			DEALLOCATE CUR 
+
+
+--performance tuning testing
+-- *************
+-- below statement will ignore the indexes on the table while executing
+-- .. this will be usefull to test the performance of the index vs no index
+SELECT ...
+  FROM my_table WITH (index=1)
+  WHERE a = 5
+
+
+-- TOP 
+-- *************
+USE ADVENTUREWORKS
+GO
+
+-- Basic update statement in 2000
+
+-- Use TOP in new statements
+-- UPDATE 5 random rows
+UPDATE TOP(5) person.contact
+	SET firstname = 'Amit'
+GO
+SELECT * FROM dbo.authors
+
+-- Use TOP in subquery to UPDATE to update five non-random rows
+
+UPDATE dbo.authors
+	SET au_fname = 'Don'
+FROM (SELECT TOP(5) au_id FROM dbo.authors
+		ORDER BY city) AS auth
+WHERE dbo.authors.au_id = auth.au_id
+GO
+
+-- Verify results of five low-named cities are now Don
+SELECT * FROM dbo.authors ORDER BY city
+
+-- DELETE
+SELECT * FROM dbo.sales
+
+-- Delete two random sales with terms On Invoice
+DELETE TOP(2) FROM dbo.sales
+	WHERE payterms = 'ON invoice'
+
+-- Verify results
+SELECT * FROM dbo.sales
+
+-- Use a variable for TOP clause
+USE AdventureWorks
+GO
+DECLARE @top INT
+SET @top = 15
+SELECT TOP(@top) Name, ListPrice 
+	FROM Production.Product
+	ORDER BY ListPrice DESC
+
+-- DML Output
+-- **********
+
+-- *** dml output 
+-- create a test table for demo
+create table test_1(iid int,vname varchar(90))
+
+--insert output
+insert into test_1
+	OUTPUT INSERTED.IID, INSERTED.VNAME
+values (1,'john')
+
+-- update output
+update test_1 
+ set vname = 'abc'
+	OUTPUT DELETED.VNAME AS DELETED_VAL,INSERTED.VNAME AS INSERTED_VAL
+where iid =1
+
+-- delete output
+delete from test_1
+	OUTPUT DELETED.IID, DELETED.VNAME
+where iid = 1
+
+-- To hold the values temporarly
+DECLARE @myTable table(iid int,vname varchar(90))
+
+INSERT INTO TEST_1
+	OUTPUT INSERTED.IID, INSERTED.VNAME
+		INTO @myTable 
+VALUES (1,'John')
+
+select * from @myTable 
+-- real time audit when transforming data from staging tables
+create table stg_customer (customerid int,Accountnumber varchar(90))
+
+DECLARE @tAudit table(customerid int,Accountnumber varchar(90))
+
+INSERT INTO stg_customer
+	OUTPUT INSERTED.CustomerID, INSERTED.AccountNumber
+		INTO @tAudit 
+select CustomerID  ,AccountNumber from sales.customer
+select * from @tAudit
+
+-- TABLESAMPLE
+-- ***********
+use adventureworks
+SELECT * FROM Production.Product -- Many rows
+SELECT * FROM Production.Product TABLESAMPLE (20 ROWS)		-- Run multiple times
+SELECT * FROM Production.Product TABLESAMPLE (10 PERCENT)	-- Run multiple times
+-- Results are based on record layout on pages
+
+-- Get the same results, as long as the underlying data hasn't changed
+SELECT * FROM Production.Product 
+	TABLESAMPLE (10 PERCENT) REPEATABLE(6573) -->some integer value , change the integer value to get other values
+
+-- *****************************************
+-- Operators:
+--		PIVOT, UNPIVOT
+--		INTERSECT, EXCEPT
+-- *****************************************
+-- PIVOT and UNPIVOT
+-- *****************
+-- Uses sales data from AdventureWorks
+USE AdventureWorks
+GO
+
+CREATE TABLE MonthlySalesTotal
+(
+	CustomerID int NOT NULL,
+	OrderMonth int NOT NULL,
+	SubTotal money NOT NULL
+)
+GO
+
+-- Insert month sales data for subset of customers
+-- SalesOrderHeader already has monthly sales totals
+INSERT MonthlySalesTotal
+	SELECT CustomerID, DATEPART(m, OrderDate), SubTotal
+		FROM Sales.SalesOrderHeader
+	WHERE CustomerID BETWEEN 1 AND 100
+
+-- View the raw results
+SELECT * FROM MonthlySalesTotal
+	ORDER BY CustomerID, OrderMonth
+
+-- See each customer's sales by month
+-- (* MNEMO : I want to  PIVOT the sum (colTotal) for ordermonths in([1]to[12])  using PIVOT() function
+-- (* MNEMO : I want to  PIVOT (Column in X-AXIS) for (Column in Y-AXIS) in([1]to[12])  using PIVOT() function
+
+SELECT * FROM MonthlySalesTotal
+	PIVOT (SUM(SubTotal) FOR OrderMonth 
+		IN ([1], [2], [3], [4], [5], [6], [7], [8], [9], [10], [11], [12]))
+	AS pvt
+-- FOR clause identifies column whose values will be pivoted
+
+-- Do the same for yearly data
+CREATE TABLE YearlySalesTotal
+(
+	CustomerID int NOT NULL,
+	OrderYear int NOT NULL,
+	SubTotal money NOT NULL
+)
+GO
+
+INSERT YearlySalesTotal
+	SELECT CustomerID, YEAR(OrderDate), SubTotal
+		FROM Sales.SalesOrderHeader
+	WHERE CustomerID BETWEEN 1 AND 100
+
+-- View the raw results
+SELECT * FROM YearlySalesTotal
+	ORDER BY CustomerID, OrderYear
+
+-- View by year and flip the table for select customers
+SELECT * FROM YearlySalesTotal
+	PIVOT (SUM(SubTotal) FOR OrderYear 
+		IN ([2001], [2002], [2003], [2004]))
+	AS pvt
+SELECT * FROM YearlySalesTotal
+	PIVOT (SUM(SubTotal) 
+		FOR CustomerID IN ([1], [2], [3], [4]))
+	AS pvt
+
+-- UNPIVOT
+-- Use the last query to create a yearly pivot table
+CREATE TABLE YearlySales
+(
+	OrderYear int NOT NULL,
+	[1] money NULL,
+	[2] money NULL,
+	[3] money NULL,
+	[4] money NULL
+)
+GO
+
+INSERT INTO YearlySales
+	SELECT * FROM YearlySalesTotal
+		PIVOT (SUM(SubTotal) 
+			FOR CustomerID IN ([1], [2], [3], [4]))
+		AS pvt
+
+SELECT * FROM YearlySales
+
+-- Unpivot the results
+SELECT * FROM YearlySales
+	UNPIVOT (SubTotal FOR CustomerID IN ([1], [2], [3], [4]))
+		AS pvt
+ORDER BY CustomerID
+
+-- Clean up
+DROP TABLE YearlySales
+DROP TABLE YearlySalesTotal
+DROP TABLE MonthlySalesTotal
+
+
+-- INTERSECT
+-- ************
+-- Run each query for total number of rows
+
+SELECT DISTINCT City FROM HumanResources.EmployeeAddress Employee
+	INNER JOIN Person.Address Address ON Employee.AddressID = Address.AddressID
+INTERSECT
+SELECT DISTINCT City FROM Sales.CustomerAddress Customer
+	INNER JOIN Person.Address Address ON Customer.AddressID = Address.AddressID
+
+-- EXCEPT (same queries as above)
+SELECT DISTINCT City FROM HumanResources.EmployeeAddress Employee
+	INNER JOIN Person.Address Address ON Employee.AddressID = Address.AddressID
+EXCEPT
+SELECT DISTINCT City FROM Sales.CustomerAddress Customer
+	INNER JOIN Person.Address Address ON Customer.AddressID = Address.AddressID
+
+-- *****************************************
+-- Ranking functions
+--		ROW_NUMBER()
+--		Other Ranking Functions
+-- *****************************************
+
+-- ROW_NUMBER()
+
+SELECT ROW_NUMBER() OVER (ORDER BY TotalDue DESC) as RowNum,
+	TotalDue, SalesOrderNumber, CustomerID, AccountNumber
+FROM Sales.SalesOrderHeader
+ORDER BY TotalDue DESC
+
+-- Other ranking functions
+-- * MNEMO -- RANK() -- SUMMARY COLUMN
+-- NTILE(5) 5:specifies the number of groups into which each partition must be divided
+SELECT 290/5,290/10
+GO
+SELECT ROW_NUMBER() OVER(ORDER BY Department) AS RowNum,
+	RANK() OVER(ORDER BY Department) AS Rank,
+	DENSE_RANK() OVER(ORDER BY Department) AS [Dense Rank],
+	NTILE(5) OVER(ORDER BY Department) AS [NTile 5],
+	NTILE(10) OVER(ORDER BY Department) AS [NTile 10],
+	FirstName + ' ' + LastName AS Name,
+	Department 
+FROM HumanResources.vEmployeeDepartment
+ORDER BY ROW_NUMBER() OVER(ORDER BY Department)
+
+-- *****************************************
+-- Common Table Expressions
+-- *****************************************
+
+--- * onfly Views | ? what is the difference between this and a derived table.
+
+
+USE AdventureWorks
+GO
+
+-- Basic CTE
+WITH SalesCTE(ProductID, SalesOrderID)
+AS
+(
+	SELECT ProductID, COUNT(SalesOrderID) AS SalesCount
+		FROM Sales.SalesOrderDetail
+	GROUP BY ProductID
+)
+SELECT * FROM SalesCTE
+-- Note that output uses column named SalesOrderID even though aliased
+
+-- Can filter results. It's just a view!
+WITH SalesCTE(ProductID, SalesOrderID)
+AS
+(
+	SELECT ProductID, COUNT(SalesOrderID) AS SalesCount
+		FROM Sales.SalesOrderDetail
+	GROUP BY ProductID
+)
+SELECT * FROM SalesCTE WHERE SalesOrderID > 1000
+
+-- And can aggregate
+WITH SalesCTE(ProductID, SalesOrderID)
+AS
+(
+	SELECT ProductID, COUNT(SalesOrderID) AS SalesCount
+		FROM Sales.SalesOrderDetail
+	GROUP BY ProductID
+)
+SELECT AVG(SalesOrderID) FROM SalesCTE WHERE SalesOrderID > 1000
+
+-- *****************************************
+-- DDL Triggers
+-- *****************************************
+
+USE AdventureWorks
+GO
+
+CREATE TABLE DDLTriggers
+(
+	ID int NOT NULL,
+	Data NVARCHAR(50)
+)
+GO
+
+-- Create DDL triggers
+CREATE TRIGGER DDLTrigger ON DATABASE FOR DROP_TABLE
+AS
+	PRINT 'Sorry! You cannot drop tables in AdventureWorks!'
+	ROLLBACK
+GO
+
+-- Test Triggers
+DROP TABLE DDLTriggers
+
+-- Log DDL event data
+CREATE TABLE DDLEventLog
+(
+	EventType NVARCHAR(100),
+	SPID NVARCHAR(5),
+	ServerName NVARCHAR(100),
+	LoginName NVARCHAR(100),
+	DatabaseName NVARCHAR(100),
+	SchemaName NVARCHAR(200), 
+	ObjectName NVARCHAR(100),
+	ObjectType NVARCHAR(100),
+	TargetObjectName NVARCHAR(100),
+	TargetObjectType NVARCHAR(100),
+	TSQLStatement NVARCHAR(2000),
+	FullData XML
+)
+GO
+
+ALTER TRIGGER DDLTrigger ON DATABASE
+	FOR DDL_DATABASE_LEVEL_EVENTS
+AS
+	DECLARE @eventData XML
+	SET @eventData = EventData()
+
+	INSERT DDLEventLog
+		(EventType, SPID, ServerName, LoginName, DatabaseName, 
+		SchemaName, ObjectName, ObjectType, TargetObjectName, TargetObjectType, 
+		TSQLStatement, FullData)
+		VALUES (
+			CONVERT(NVARCHAR(100), @eventData.query('data(//EventType)')),
+			CONVERT(NVARCHAR(5), @eventData.query('data(//SPID)')),
+			CONVERT(NVARCHAR(100), @eventData.query('data(//ServerName)')),
+			CONVERT(NVARCHAR(100), @eventData.query('data(//LoginName)')),
+			CONVERT(NVARCHAR(100), @eventData.query('data(//DatabaseName)')),
+			CONVERT(NVARCHAR(200), @eventData.query('data(//SchemaName)')),
+			CONVERT(NVARCHAR(100), @eventData.query('data(//ObjectName)')),
+			CONVERT(NVARCHAR(100), @eventData.query('data(//ObjectType)')),
+			CONVERT(NVARCHAR(100), @eventData.query('data(//TargetObjectName)')),
+			CONVERT(NVARCHAR(100), @eventData.query('data(//TargetObjectType)')),
+			CONVERT(NVARCHAR(2000), @eventData.query('data(//CommandText)')),
+			@eventData
+		)
+GO
+
+-- Test
+CREATE TABLE NewTable(ID int)
+DROP TABLE NewTable
+GO
+
+-- View event data
+SELECT * FROM DDLEventLog
+
+-- Clean up
+DROP TRIGGER DDLTrigger ON DATABASE
+GO
+DROP TABLE DDLTriggers
+DROP TABLE DDLEventLog
+
+GO
+--- Avoid cursors for comma seperated list of Huge Data
+
+CREATE table TBL_HR (iid int, vname varchar(99))
+go 
+
+insert into TBL_HR values (1,'A')
+insert into TBL_HR values (1,'B')
+insert into TBL_HR values (1,'C ')
+insert into TBL_HR values (2,'X')
+insert into TBL_HR values (2,'Y')
+insert into TBL_HR values (2,'Z')
+
+go 
+SELECT iid,vname FROM TBL_HR A FOR xml PATH ('')
+
+SELECT distinct B.IID, 
+       empnos = replace(replace(
+           (SELECT vname
+           FROM TBL_HR A
+           WHERE A.IID= B.IID
+           ORDER BY A.IID
+           FOR xml PATH (''))
+		   ,'<vname>','')
+		   ,'</vname>',',')
+			
+FROM TBL_HR B
+ORDER BY B.IID;
+
+GO 
+DROP TABLE TBL_HR
+
+
+
+GO
+--Comma Seperated List
+use tempdb
+create table test (iid int, vname varchar(99))
+go 
+
+insert into test values (1,'A')
+insert into test values (1,'B')
+insert into test values (1,'C ')
+insert into test values (2,'X')
+insert into test values (2,NULL)
+insert into test values (2,'Z')
+insert into test values (3,NULL)
+
+insert into test values (3,'DD')
+
+go 
+-- create a function using CROSS APPLY
+create function fn_tbl(@IID INT )
+RETURNS TABLE
+AS RETURN
+(SELECT distinct B.IID, 
+       empnos = replace(replace(
+           (SELECT vname
+           FROM test A
+           WHERE A.IID= B.IID
+           ORDER BY A.IID
+           FOR xml PATH (''))
+		   ,'<vname>','')
+		   ,'</vname>',',')
+			
+FROM TEST B
+where B.IID = @IID
+)
+-- go
+
+SELECT * FROM DBO.fn_tbl(1)
+SELECT distinct b.iid,left(empnos,len(empnos)-1) FROM TEST CROSS APPLY DBO.fn_tbl(iid) b
+
